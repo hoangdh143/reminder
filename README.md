@@ -4,12 +4,12 @@ Command-line reminder app written in Rust
 This Rust program implements a spaced repetition reminder system with the following features:
 Installation and Usage
 
-###Build and install:
+### Build and install:
 ```cargo build --release```
-# Optionally install globally
+### Optionally install globally
 ```cargo install --path .```
 
-###Usage Examples
+### Usage Examples
 
 Add a new reminder:
 ```reminder add "Learn Rust ownership concepts"```
@@ -27,7 +27,7 @@ Remove a reminder:
 ```reminder remove 1```
 
 
-###How the Spaced Repetition Works
+### How the Spaced Repetition Works
 
 Initial reminder: Added to review queue, first review due in 1 day
 - After 1st review: Next review in 3 days
