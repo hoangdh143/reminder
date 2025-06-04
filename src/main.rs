@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::io::{self};
 
 #[derive(Parser)]
 #[command(name = "reminder")]
@@ -38,6 +39,12 @@ enum Commands {
         #[arg(value_name = "ID")]
         id: u32,
     },
+    Export {
+        #[arg(value_name = "ID")]
+        id: u32,
+        #[arg(value_name = "PATH")]
+        path: String
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -152,6 +159,15 @@ impl ReminderStore {
             .ok_or_else(|| format!("Reminder with ID {} not found", id))?;
         Ok(())
     }
+
+    fn export_to_file(&self, id: u32, file_path: String) -> io::Result<()> {
+        let reminder = self.reminders.get(&id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "ID not found"))?;
+
+        fs::write(file_path, &reminder.content)?;
+        Ok(())
+    }
+
 }
 
 fn get_data_file_path() -> PathBuf {
@@ -270,6 +286,15 @@ fn main() {
                 Ok(()) => {
                     println!("Reminder {} removed successfully", id);
                     store.save();
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+
+        Commands::Export {id, path} => {
+            match store.export_to_file(id, path) {
+                Ok(()) => {
+                    println!("Reminder {} export successfully", id);
                 }
                 Err(e) => eprintln!("Error: {}", e),
             }
