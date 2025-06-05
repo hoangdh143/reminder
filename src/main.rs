@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::io::{self};
 
 #[derive(Parser)]
 #[command(name = "reminder")]
@@ -13,7 +14,7 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Trim the reminder content to a specific number of characters
+    /// Trim the reminder content to a specific number of characters when displaying
     #[arg(long, value_name = "NUMBER")]
     trim: Option<usize>,
 }
@@ -42,6 +43,13 @@ enum Commands {
         #[arg(value_name = "ID")]
         id: u32,
     },
+    Export {
+        /// Export content of specific reminder with ID
+        #[arg(value_name = "ID")]
+        id: u32,
+        #[arg(value_name = "PATH")]
+        path: String
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -63,14 +71,14 @@ struct ReminderStore {
 impl ReminderStore {
     fn load() -> Self {
         let file_path = get_data_file_path();
-
+        
         if file_path.exists() {
             let content = fs::read_to_string(&file_path)
                 .expect("Failed to read reminder file");
-
+            
             serde_json::from_str(&content)
-                .unwrap_or_else(|e| {
-                    eprintln!("Warning: Could not parse reminder file ({}). Starting fresh.", e);
+                .unwrap_or_else(|_| {
+                    eprintln!("Warning: Could not parse reminder file, starting fresh");
                     Self::default()
                 })
         } else {
@@ -80,16 +88,16 @@ impl ReminderStore {
 
     fn save(&self) {
         let file_path = get_data_file_path();
-
+        
         // Create directory if it doesn't exist
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)
                 .expect("Failed to create data directory");
         }
-
+        
         let content = serde_json::to_string_pretty(self)
             .expect("Failed to serialize reminders");
-
+        
         fs::write(&file_path, content)
             .expect("Failed to write reminder file");
     }
@@ -156,12 +164,20 @@ impl ReminderStore {
             .ok_or_else(|| format!("Reminder with ID {} not found", id))?;
         Ok(())
     }
+
+    fn export_to_file(&self, id: u32, file_path: String) -> io::Result<()> {
+        let reminder = self.reminders.get(&id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "ID not found"))?;
+
+        fs::write(file_path, &reminder.content)?;
+        Ok(())
+    }
 }
 
 fn get_data_file_path() -> PathBuf {
     let mut path = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from(".")); // Fallback to current dir if data_dir is not available
-    path.push("reminder"); // Changed to avoid potential conflict with other apps
+        .unwrap_or_else(|| PathBuf::from(".")); // Fallback to current directory if data_dir is not available
+    path.push("reminder");
     path.push("reminders.json");
     path
 }
@@ -177,9 +193,9 @@ fn format_duration_until(datetime: DateTime<Local>) -> String {
         } else if abs_duration.num_hours() > 0 {
             format!("{} hours ago", abs_duration.num_hours())
         } else if abs_duration.num_minutes() > 0 {
-            format!("{} minutes ago", abs_duration.num_minutes())
+             format!("{} minutes ago", abs_duration.num_minutes())
         } else {
-             format!("{} seconds ago", abs_duration.num_seconds())
+            "just now".to_string()
         }
     } else {
         if duration.num_days() > 0 {
@@ -189,17 +205,19 @@ fn format_duration_until(datetime: DateTime<Local>) -> String {
         } else if duration.num_minutes() > 0 {
             format!("in {} minutes", duration.num_minutes())
         } else {
-            format!("in {} seconds", duration.num_seconds())
+            "now".to_string()
         }
     }
 }
 
-// Helper function to trim content
-fn trim_content(content: &str, max_len: Option<usize>) -> String {
-    match max_len {
+fn get_trimmed_content(content: &str, trim_length: Option<usize>) -> String {
+    match trim_length {
         Some(len) => {
+            if len == 0 { // Handle trim 0 explicitly if desired, e.g., return "..." or empty
+                return "...".to_string(); 
+            }
             if content.chars().count() > len {
-                content.chars().take(len).collect::<String>() + "..."
+                format!("{}...", content.chars().take(len).collect::<String>())
             } else {
                 content.to_string()
             }
@@ -208,67 +226,67 @@ fn trim_content(content: &str, max_len: Option<usize>) -> String {
     }
 }
 
-
 fn main() {
     let cli = Cli::parse();
     let mut store = ReminderStore::load();
+    let trim_opt = cli.trim;
 
     match cli.command {
         Commands::Add { content } => {
-            let id = store.add_reminder(content.clone());
+            let id = store.add_reminder(content.clone()); // Store full content
             store.save();
-            let display_content = trim_content(&content, cli.trim);
-            println!("Added reminder with ID {}: \"{}\"", id, display_content);
+            let displayed_content = get_trimmed_content(&content, trim_opt);
+            println!("Added reminder with ID {}: \"{}\"", id, displayed_content);
             println!("Next review: 1 day from now");
         }
 
         Commands::Check => {
             let due_reminders = store.get_due_reminders();
-
+            
             if due_reminders.is_empty() {
                 println!("No reminders due for review!");
             } else {
                 println!("Reminders due for review:");
                 println!("{}", "=".repeat(50));
-
+                
                 for reminder in due_reminders {
-                    let display_content = trim_content(&reminder.content, cli.trim);
+                    let displayed_content = get_trimmed_content(&reminder.content, trim_opt);
                     println!("ID: {}", reminder.id);
-                    println!("Content: {}", display_content);
+                    println!("Content: {}", displayed_content);
                     println!("Review count: {}", reminder.review_count);
                     println!("Due: {}", format_duration_until(reminder.next_review));
                     println!("{}", "-".repeat(30));
                 }
-
+                
                 println!("\nUse 'reminder review <ID>' to mark a reminder as reviewed");
             }
         }
 
         Commands::List => {
             let reminders = store.get_all_reminders();
-
+            
             if reminders.is_empty() {
                 println!("No reminders found!");
             } else {
                 println!("All reminders:");
                 println!("{}", "=".repeat(70));
-
+                
                 for reminder in reminders {
                     let status = if reminder.completed {
                         "✓ Completed"
                     } else {
                         "⏳ Active"
                     };
-
-                    let display_content = trim_content(&reminder.content, cli.trim);
-                    println!("ID: {} | {} | Reviews: {}",
+                    
+                    let displayed_content = get_trimmed_content(&reminder.content, trim_opt);
+                    println!("ID: {} | {} | Reviews: {}", 
                              reminder.id, status, reminder.review_count);
-                    println!("Content: {}", display_content);
-
+                    println!("Content: {}", displayed_content);
+                    
                     if !reminder.completed {
                         println!("Next review: {}", format_duration_until(reminder.next_review));
                     }
-
+                    
                     println!("{}", "-".repeat(50));
                 }
             }
@@ -277,8 +295,7 @@ fn main() {
         Commands::Review { id } => {
             match store.review_reminder(id) {
                 Ok(()) => {
-                    store.save(); // Save before accessing reminder to ensure it's up-to-date
-                    let reminder = &store.reminders[&id]; // Re-fetch to get updated state
+                    let reminder = &store.reminders[&id]; // Assumes reminder exists after successful review
                     if reminder.completed {
                         println!("Reminder {} completed! 🎉", id);
                         println!("You've successfully reviewed this {} times.", reminder.review_count);
@@ -286,6 +303,7 @@ fn main() {
                         println!("Reminder {} reviewed!", id);
                         println!("Next review: {}", format_duration_until(reminder.next_review));
                     }
+                    store.save();
                 }
                 Err(e) => eprintln!("Error: {}", e),
             }
@@ -296,6 +314,14 @@ fn main() {
                 Ok(()) => {
                     println!("Reminder {} removed successfully", id);
                     store.save();
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+        Commands::Export {id, path} => {
+            match store.export_to_file(id, path) {
+                Ok(()) => {
+                    println!("Reminder {} export successfully", id);
                 }
                 Err(e) => eprintln!("Error: {}", e),
             }
